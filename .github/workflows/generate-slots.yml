@@ -1,0 +1,16 @@
+name: Generate Slots
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call endpoint
+        run: |
+          curl -X POST https://nonerroneously-nonelliptic-shaunna.ngrok-free.dev/api/slots/generate \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
