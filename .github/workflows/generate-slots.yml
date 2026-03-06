@@ -12,5 +12,5 @@ jobs:
     steps:
       - name: Call endpoint
         run: |
-          curl -X POST https://nonerroneously-nonelliptic-shaunna.ngrok-free.dev/api/slots/generate \
+          curl -f -sS -X POST https://nonerroneously-nonelliptic-shaunna.ngrok-free.dev/api/slots/generate \
           -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
