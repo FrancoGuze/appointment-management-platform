@@ -1,0 +1,11 @@
+
+> Appointment_booking_system@0.1.0 start C:\Users\frang\OneDrive\Documents\Repositorios Git\servicio_de_reservas_v2
+> next start "--port" "4011"
+
+▲ Next.js 16.1.6
+- Local:         http://localhost:4011
+- Network:       http://10.117.180.80:4011
+
+✓ Starting...
+✓ Ready in 2.7s
+ ELIFECYCLE  Command failed with exit code 3221225786.
