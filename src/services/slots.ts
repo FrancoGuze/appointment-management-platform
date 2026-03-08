@@ -1,7 +1,12 @@
 import { supabase } from "@/src/lib/supabase";
 import { ServiceError } from "@/src/services/errors";
 
-export type SlotState = "scheduled" | "completed" | "cancelled" | "no_show";
+export type SlotState =
+  | "scheduled"
+  | "completed"
+  | "cancelled"
+  | "no_show"
+  | "available";
 
 export interface Slot {
   id: string;
@@ -10,6 +15,7 @@ export interface Slot {
   end_time: string;
   state: SlotState;
   created_at: string;
+  updated_at: string | null;
 }
 
 interface AvailabilityTemplateRow {
@@ -35,6 +41,15 @@ interface GenerationOptions {
   daysAhead?: number;
 }
 
+interface GenerationContext {
+  daysAhead: number;
+  candidateSeeds: SlotSeed[];
+  existingSlots: Slot[];
+  existingByKey: Map<string, Slot>;
+  takenSlotIds: Set<string>;
+  takenIntervalsByDate: Map<string, Array<{ start_time: string; end_time: string }>>;
+}
+
 export interface SlotGenerationSummary {
   mode: "generate" | "regenerate";
   daysAhead: number;
@@ -55,6 +70,10 @@ export interface CalendarSlot extends Slot {
 const DEFAULT_GENERATION_DAYS = 5;
 const MAX_GENERATION_DAYS = 90;
 
+/* ============================================================================
+ * SECTION 1: AUXILIARY FUNCTIONS
+ * ========================================================================== */
+
 function normalizeDaysAhead(value: number | undefined): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     const days = Math.floor(value);
@@ -63,29 +82,17 @@ function normalizeDaysAhead(value: number | undefined): number {
     }
   }
 
-  const envValue = Number.parseInt(
-    process.env.SLOT_GENERATION_DAYS ?? "",
-    10
-  );
+  const envValue = Number.parseInt(process.env.SLOT_GENERATION_DAYS ?? "", 10);
 
-  if (Number.isInteger(envValue) && envValue >= 1 && envValue <= MAX_GENERATION_DAYS) {
+  if (
+    Number.isInteger(envValue) &&
+    envValue >= 1 &&
+    envValue <= MAX_GENERATION_DAYS
+  ) {
     return envValue;
   }
 
   return DEFAULT_GENERATION_DAYS;
-}
-
-function addDays(date: Date, days: number): Date {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-}
-
-function toDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function parseTimeToMinutes(value: string): number {
@@ -103,6 +110,7 @@ function slotKey(slotDate: string, startTime: string, endTime: string): string {
   return `${slotDate}|${startTime}|${endTime}`;
 }
 
+/* Overlap rule: A starts before B ends AND B starts before A ends. */
 function overlaps(
   startA: string,
   endA: string,
@@ -115,115 +123,6 @@ function overlaps(
   const bEnd = parseTimeToMinutes(endB);
 
   return aStart < bEnd && bStart < aEnd;
-}
-
-async function getAvailabilityTemplates(): Promise<AvailabilityTemplateRow[]> {
-  const { data, error } = await supabase
-    .schema("public")
-    .from("availability_templates")
-    .select("id, weekday, start_time, end_time, slot_duration_minutes");
-
-  if (error) {
-    throw new ServiceError(error.message, 500);
-  }
-
-  return (data ?? []) as AvailabilityTemplateRow[];
-}
-
-function buildSlotSeeds(
-  templates: AvailabilityTemplateRow[],
-  daysAhead: number
-): SlotSeed[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const templatesByWeekday = new Map<number, AvailabilityTemplateRow[]>();
-
-  for (const template of templates) {
-    if (!templatesByWeekday.has(template.weekday)) {
-      templatesByWeekday.set(template.weekday, []);
-    }
-
-    templatesByWeekday.get(template.weekday)?.push(template);
-  }
-
-  const generated: SlotSeed[] = [];
-
-  for (let offset = 0; offset < daysAhead; offset += 1) {
-    const currentDate = addDays(today, offset);
-    const dateKey = toDateKey(currentDate);
-    const weekday = currentDate.getDay();
-    const dayTemplates = templatesByWeekday.get(weekday) ?? [];
-
-    for (const template of dayTemplates) {
-      if (template.slot_duration_minutes <= 0) {
-        continue;
-      }
-
-      const dayStartMinutes = parseTimeToMinutes(template.start_time);
-      const dayEndMinutes = parseTimeToMinutes(template.end_time);
-
-      for (
-        let cursor = dayStartMinutes;
-        cursor + template.slot_duration_minutes <= dayEndMinutes;
-        cursor += template.slot_duration_minutes
-      ) {
-        generated.push({
-          slot_date: dateKey,
-          start_time: minutesToTime(cursor),
-          end_time: minutesToTime(cursor + template.slot_duration_minutes),
-        });
-      }
-    }
-  }
-
-  const deduplicated = new Map<string, SlotSeed>();
-
-  for (const seed of generated) {
-    deduplicated.set(slotKey(seed.slot_date, seed.start_time, seed.end_time), seed);
-  }
-
-  return Array.from(deduplicated.values());
-}
-
-async function getExistingSlotsInRange(daysAhead: number): Promise<Slot[]> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const fromDate = toDateKey(today);
-  const toDate = toDateKey(addDays(today, daysAhead - 1));
-
-  const { data, error } = await supabase
-    .schema("public")
-    .from("slots")
-    .select("id, slot_date, start_time, end_time, state, created_at")
-    .gte("slot_date", fromDate)
-    .lte("slot_date", toDate);
-
-  if (error) {
-    throw new ServiceError(error.message, 500);
-  }
-
-  return (data ?? []) as Slot[];
-}
-
-async function getTakenSlotIds(slotIds: string[]): Promise<Set<string>> {
-  if (!slotIds.length) {
-    return new Set<string>();
-  }
-
-  const { data, error } = await supabase
-    .schema("public")
-    .from("appointments")
-    .select("id, slot_id")
-    .in("slot_id", slotIds);
-
-  if (error) {
-    throw new ServiceError(error.message, 500);
-  }
-
-  const appointments = (data ?? []) as AppointmentSlotRow[];
-  return new Set(appointments.map((appointment) => appointment.slot_id));
 }
 
 function buildTakenIntervalsByDate(
@@ -255,10 +154,124 @@ function collidesWithTaken(
   takenIntervalsByDate: Map<string, Array<{ start_time: string; end_time: string }>>
 ): boolean {
   const intervals = takenIntervalsByDate.get(seed.slot_date) ?? [];
-
   return intervals.some((interval) =>
     overlaps(seed.start_time, seed.end_time, interval.start_time, interval.end_time)
   );
+}
+
+/* ============================================================================
+ * SECTION 2: SLOT GENERATION AREA
+ * ========================================================================== */
+
+async function getAvailabilityTemplates(): Promise<AvailabilityTemplateRow[]> {
+  const { data, error } = await supabase
+    .schema("public")
+    .from("availability_templates")
+    .select("id, weekday, start_time, end_time, slot_duration_minutes");
+
+  if (error) {
+    throw new ServiceError(error.message, 500);
+  }
+
+  return (data ?? []) as AvailabilityTemplateRow[];
+}
+
+/* Builds candidate slots from templates for each day in the target range. */
+function buildSlotSeeds(
+  templates: AvailabilityTemplateRow[],
+  daysAhead: number
+): SlotSeed[] {
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
+
+  const templatesByWeekday = new Map<number, AvailabilityTemplateRow[]>();
+
+  for (const template of templates) {
+    if (!templatesByWeekday.has(template.weekday)) {
+      templatesByWeekday.set(template.weekday, []);
+    }
+    templatesByWeekday.get(template.weekday)?.push(template);
+  }
+
+  const generated: SlotSeed[] = [];
+
+  for (let offset = 0; offset < daysAhead; offset += 1) {
+    const currentDateUtc = new Date(todayUtc);
+    currentDateUtc.setUTCDate(todayUtc.getUTCDate() + offset);
+    const currentDateKey = currentDateUtc.toISOString().slice(0, 10);
+    const weekday = currentDateUtc.getUTCDay();
+    const dayTemplates = templatesByWeekday.get(weekday) ?? [];
+
+    for (const template of dayTemplates) {
+      if (template.slot_duration_minutes <= 0) {
+        continue;
+      }
+
+      const dayStartMinutes = parseTimeToMinutes(template.start_time);
+      const dayEndMinutes = parseTimeToMinutes(template.end_time);
+
+      for (
+        let cursor = dayStartMinutes;
+        cursor + template.slot_duration_minutes <= dayEndMinutes;
+        cursor += template.slot_duration_minutes
+      ) {
+        generated.push({
+          slot_date: currentDateKey,
+          start_time: minutesToTime(cursor),
+          end_time: minutesToTime(cursor + template.slot_duration_minutes),
+        });
+      }
+    }
+  }
+
+  const deduplicated = new Map<string, SlotSeed>();
+
+  for (const seed of generated) {
+    deduplicated.set(slotKey(seed.slot_date, seed.start_time, seed.end_time), seed);
+  }
+
+  return Array.from(deduplicated.values());
+}
+
+async function getExistingSlotsInRange(daysAhead: number): Promise<Slot[]> {
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
+  const fromDate = todayUtc.toISOString().slice(0, 10);
+  const toDateUtc = new Date(todayUtc);
+  toDateUtc.setUTCDate(todayUtc.getUTCDate() + daysAhead - 1);
+  const toDate = toDateUtc.toISOString().slice(0, 10);
+
+  const { data, error } = await supabase
+    .schema("public")
+    .from("slots")
+    .select("id, slot_date, start_time, end_time, state, created_at, updated_at")
+    .gte("slot_date", fromDate)
+    .lte("slot_date", toDate);
+
+  if (error) {
+    throw new ServiceError(error.message, 500);
+  }
+
+  return (data ?? []) as Slot[];
+}
+
+async function getTakenSlotIds(slotIds: string[]): Promise<Set<string>> {
+  if (!slotIds.length) {
+    return new Set<string>();
+  }
+
+  const { data, error } = await supabase
+    .schema("public")
+    .from("appointments")
+    .select("id, slot_id")
+    .in("slot_id", slotIds);
+
+  if (error) {
+    throw new ServiceError(error.message, 500);
+  }
+
+  const appointments = (data ?? []) as AppointmentSlotRow[];
+  return new Set(appointments.map((appointment) => appointment.slot_id));
 }
 
 async function insertSlots(slotSeeds: SlotSeed[]): Promise<number> {
@@ -274,7 +287,8 @@ async function insertSlots(slotSeeds: SlotSeed[]): Promise<number> {
         slot_date: seed.slot_date,
         start_time: seed.start_time,
         end_time: seed.end_time,
-        state: "scheduled",
+        state: "available",
+        updated_at: new Date().toISOString(),
       }))
     );
 
@@ -284,6 +298,82 @@ async function insertSlots(slotSeeds: SlotSeed[]): Promise<number> {
 
   return slotSeeds.length;
 }
+
+async function buildGenerationContext(
+  options?: GenerationOptions
+): Promise<GenerationContext> {
+  const daysAhead = normalizeDaysAhead(options?.daysAhead);
+  const templates = await getAvailabilityTemplates();
+  const candidateSeeds = buildSlotSeeds(templates, daysAhead);
+  const existingSlots = await getExistingSlotsInRange(daysAhead);
+
+  const existingByKey = new Map<string, Slot>();
+  for (const slot of existingSlots) {
+    existingByKey.set(slotKey(slot.slot_date, slot.start_time, slot.end_time), slot);
+  }
+
+  const existingSlotIds = existingSlots.map((slot) => slot.id);
+  const takenSlotIds = await getTakenSlotIds(existingSlotIds);
+  const takenIntervalsByDate = buildTakenIntervalsByDate(existingSlots, takenSlotIds);
+
+  return {
+    daysAhead,
+    candidateSeeds,
+    existingSlots,
+    existingByKey,
+    takenSlotIds,
+    takenIntervalsByDate,
+  };
+}
+
+function computeInsertableSeeds(
+  context: GenerationContext
+): { seedsToInsert: SlotSeed[]; skippedExisting: number; skippedCollision: number } {
+  let skippedExisting = 0;
+  let skippedCollision = 0;
+  const seedsToInsert: SlotSeed[] = [];
+
+  for (const seed of context.candidateSeeds) {
+    const key = slotKey(seed.slot_date, seed.start_time, seed.end_time);
+
+    if (context.existingByKey.has(key)) {
+      skippedExisting += 1;
+      continue;
+    }
+
+    if (collidesWithTaken(seed, context.takenIntervalsByDate)) {
+      skippedCollision += 1;
+      continue;
+    }
+
+    seedsToInsert.push(seed);
+  }
+
+  return { seedsToInsert, skippedExisting, skippedCollision };
+}
+
+export async function generateSlotsFromTemplates(
+  options?: GenerationOptions
+): Promise<SlotGenerationSummary> {
+  const context = await buildGenerationContext(options);
+  const { seedsToInsert, skippedExisting, skippedCollision } =
+    computeInsertableSeeds(context);
+  const inserted = await insertSlots(seedsToInsert);
+
+  return {
+    mode: "generate",
+    daysAhead: context.daysAhead,
+    generatedCandidates: context.candidateSeeds.length,
+    inserted,
+    skippedExisting,
+    skippedCollision,
+    removedUntakenObsolete: 0,
+  };
+}
+
+/* ============================================================================
+ * SECTION 3: SLOT RE-GENERATION AREA
+ * ========================================================================== */
 
 async function deleteSlots(slotIds: string[]): Promise<number> {
   if (!slotIds.length) {
@@ -303,66 +393,33 @@ async function deleteSlots(slotIds: string[]): Promise<number> {
   return slotIds.length;
 }
 
-async function runSlotGeneration(
-  mode: "generate" | "regenerate",
+export async function regenerateSlotsFromTemplates(
   options?: GenerationOptions
 ): Promise<SlotGenerationSummary> {
-  const daysAhead = normalizeDaysAhead(options?.daysAhead);
-  const templates = await getAvailabilityTemplates();
-  const candidateSeeds = buildSlotSeeds(templates, daysAhead);
-  const existingSlots = await getExistingSlotsInRange(daysAhead);
-
-  const existingByKey = new Map<string, Slot>();
-  for (const slot of existingSlots) {
-    existingByKey.set(slotKey(slot.slot_date, slot.start_time, slot.end_time), slot);
-  }
-
-  const existingSlotIds = existingSlots.map((slot) => slot.id);
-  const takenSlotIds = await getTakenSlotIds(existingSlotIds);
-  const takenIntervalsByDate = buildTakenIntervalsByDate(existingSlots, takenSlotIds);
-
-  let skippedExisting = 0;
-  let skippedCollision = 0;
-
-  const seedsToInsert: SlotSeed[] = [];
-  for (const seed of candidateSeeds) {
-    const key = slotKey(seed.slot_date, seed.start_time, seed.end_time);
-
-    if (existingByKey.has(key)) {
-      skippedExisting += 1;
-      continue;
-    }
-
-    if (collidesWithTaken(seed, takenIntervalsByDate)) {
-      skippedCollision += 1;
-      continue;
-    }
-
-    seedsToInsert.push(seed);
-  }
+  const context = await buildGenerationContext(options);
+  const { seedsToInsert, skippedExisting, skippedCollision } =
+    computeInsertableSeeds(context);
 
   const candidateKeySet = new Set(
-    candidateSeeds.map((seed) => slotKey(seed.slot_date, seed.start_time, seed.end_time))
+    context.candidateSeeds.map((seed) =>
+      slotKey(seed.slot_date, seed.start_time, seed.end_time)
+    )
   );
 
-  let removedUntakenObsolete = 0;
-  if (mode === "regenerate") {
-    const obsoleteUntakenSlotIds = existingSlots
-      .filter((slot) => {
-        const key = slotKey(slot.slot_date, slot.start_time, slot.end_time);
-        return !takenSlotIds.has(slot.id) && !candidateKeySet.has(key);
-      })
-      .map((slot) => slot.id);
+  const obsoleteUntakenSlotIds = context.existingSlots
+    .filter((slot) => {
+      const key = slotKey(slot.slot_date, slot.start_time, slot.end_time);
+      return !context.takenSlotIds.has(slot.id) && !candidateKeySet.has(key);
+    })
+    .map((slot) => slot.id);
 
-    removedUntakenObsolete = await deleteSlots(obsoleteUntakenSlotIds);
-  }
-
+  const removedUntakenObsolete = await deleteSlots(obsoleteUntakenSlotIds);
   const inserted = await insertSlots(seedsToInsert);
 
   return {
-    mode,
-    daysAhead,
-    generatedCandidates: candidateSeeds.length,
+    mode: "regenerate",
+    daysAhead: context.daysAhead,
+    generatedCandidates: context.candidateSeeds.length,
     inserted,
     skippedExisting,
     skippedCollision,
@@ -370,26 +427,14 @@ async function runSlotGeneration(
   };
 }
 
-export async function generateSlotsFromTemplates(
-  options?: GenerationOptions
-): Promise<SlotGenerationSummary> {
-  return runSlotGeneration("generate", options);
-}
-
-export async function regenerateSlotsFromTemplates(
-  options?: GenerationOptions
-): Promise<SlotGenerationSummary> {
-  return runSlotGeneration("regenerate", options);
-}
-
 export async function getCalendarSlots(): Promise<CalendarSlot[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const utcTodayDateKey = new Date().toISOString().slice(0, 10);
 
   const { data: slotData, error: slotError } = await supabase
     .schema("public")
     .from("slots")
-    .select("id, slot_date, start_time, end_time, state, created_at")
-    .gte("slot_date", today)
+    .select("id, slot_date, start_time, end_time, state, created_at, updated_at")
+    .gte("slot_date", utcTodayDateKey)
     .order("slot_date", { ascending: true })
     .order("start_time", { ascending: true });
 
@@ -432,7 +477,9 @@ export async function getCalendarSlots(): Promise<CalendarSlot[]> {
       ...slot,
       appointmentId,
       availability:
-        slot.state === "scheduled" && !hasAppointment ? "available" : "occupied",
+        (slot.state === "scheduled" || slot.state === "available") && !hasAppointment
+          ? "available"
+          : "occupied",
     };
   });
 }

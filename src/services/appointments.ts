@@ -8,17 +8,20 @@ export interface Appointment {
   slot_id: string;
   user_id: string;
   professional_id: string | null;
+  user_full_name: string | null;
+  professional_full_name: string | null;
   slot_date: string | null;
   start_time: string | null;
   end_time: string | null;
   status: AppointmentStatus;
   notes: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 interface SlotAvailability {
   id: string;
-  state: AppointmentStatus;
+  state: AppointmentStatus | "available";
 }
 
 interface SlotMeta {
@@ -28,10 +31,30 @@ interface SlotMeta {
   end_time: string;
 }
 
+interface UserMeta {
+  id: string;
+  full_name: string | null;
+}
+
 export interface CreateAppointmentInput {
   slotId: string;
   userId: string;
   notes?: string;
+}
+
+async function updateSlotState(
+  slotId: string,
+  state: AppointmentStatus | "available"
+): Promise<void> {
+  const { error } = await supabase
+    .schema("public")
+    .from("slots")
+    .update({ state, updated_at: new Date().toISOString() })
+    .eq("id", slotId);
+
+  if (error) {
+    throw new ServiceError(error.message, 500);
+  }
 }
 
 async function enrichAppointmentsWithSlotData(
@@ -57,10 +80,45 @@ async function enrichAppointmentsWithSlotData(
     ((data ?? []) as SlotMeta[]).map((slot) => [slot.id, slot])
   );
 
+  const userIds = Array.from(new Set(appointments.map((item) => item.user_id)));
+  const professionalIds = Array.from(
+    new Set(
+      appointments
+        .map((item) => item.professional_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  const allUserIds = Array.from(new Set([...userIds, ...professionalIds]));
+
+  let userMap = new Map<string, UserMeta>();
+
+  if (allUserIds.length) {
+    const { data: userData, error: userError } = await supabase
+      .schema("public")
+      .from("users")
+      .select("id, full_name")
+      .in("id", allUserIds);
+
+    if (userError) {
+      throw new ServiceError(userError.message, 500);
+    }
+
+    userMap = new Map<string, UserMeta>(
+      ((userData ?? []) as UserMeta[]).map((user) => [user.id, user])
+    );
+  }
+
   return appointments.map((appointment) => {
     const slot = slotMap.get(appointment.slot_id);
+    const user = userMap.get(appointment.user_id);
+    const professional = appointment.professional_id
+      ? userMap.get(appointment.professional_id)
+      : undefined;
+
     return {
       ...appointment,
+      user_full_name: user?.full_name ?? null,
+      professional_full_name: professional?.full_name ?? null,
       slot_date: slot?.slot_date ?? null,
       start_time: slot?.start_time ?? null,
       end_time: slot?.end_time ?? null,
@@ -79,7 +137,7 @@ export async function getAppointments(): Promise<Appointment[]> {
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -93,7 +151,7 @@ export async function getAppointmentsByUserId(userId: string): Promise<Appointme
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -110,7 +168,7 @@ export async function getAppointmentsByProfessionalId(
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .eq("professional_id", professionalId)
     .order("created_at", { ascending: false });
 
@@ -125,7 +183,7 @@ export async function getAppointmentById(appointmentId: string): Promise<Appoint
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .eq("id", appointmentId)
     .maybeSingle();
 
@@ -160,7 +218,7 @@ async function assertSlotAvailability(slotId: string): Promise<void> {
     throw new ServiceError("Slot not found", 404);
   }
 
-  if (currentSlot.state !== "scheduled") {
+  if (currentSlot.state !== "scheduled" && currentSlot.state !== "available") {
     throw new ServiceError("Slot is not available", 409);
   }
 
@@ -191,13 +249,16 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
       professional_id: null,
       status: "scheduled",
       notes: input.notes ?? null,
+      updated_at: new Date().toISOString(),
     })
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .single();
 
   if (error) {
     throw new ServiceError(error.message, 500);
   }
+
+  await updateSlotState(input.slotId, "scheduled");
 
   return enrichAppointmentWithSlotData(data as Appointment);
 }
@@ -216,14 +277,16 @@ export async function cancelAppointment(appointmentId: string): Promise<Appointm
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .update({ status: "cancelled" })
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
     .eq("id", appointmentId)
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .single();
 
   if (error) {
     throw new ServiceError(error.message, 500);
   }
+
+  await updateSlotState((data as Appointment).slot_id, "cancelled");
 
   return enrichAppointmentWithSlotData(data as Appointment);
 }
@@ -235,14 +298,16 @@ export async function updateAppointmentStatus(
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .update({ status })
+    .update({ status, updated_at: new Date().toISOString() })
     .eq("id", appointmentId)
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .single();
 
   if (error) {
     throw new ServiceError(error.message, 500);
   }
+
+  await updateSlotState((data as Appointment).slot_id, status);
 
   return enrichAppointmentWithSlotData(data as Appointment);
 }
@@ -254,9 +319,9 @@ export async function assignProfessionalToAppointment(
   const { data, error } = await supabase
     .schema("public")
     .from("appointments")
-    .update({ professional_id: professionalId })
+    .update({ professional_id: professionalId, updated_at: new Date().toISOString() })
     .eq("id", appointmentId)
-    .select("id, slot_id, user_id, professional_id, status, notes, created_at")
+    .select("id, slot_id, user_id, professional_id, status, notes, created_at, updated_at")
     .single();
 
   if (error) {

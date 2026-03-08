@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 import type { CalendarSlot } from "@/src/services/slots";
+import {
+  formatUtcSlotTimeLocal,
+  toLocalDateKeyFromUtcSlot,
+} from "@/src/lib/datetime";
 
 interface SlotCalendarProps {
   slots: CalendarSlot[];
@@ -45,10 +49,6 @@ function formatSelectedDate(dateKey: string): string {
   }).format(parseDateKey(dateKey));
 }
 
-function formatHour(time: string): string {
-  return time.slice(0, 5);
-}
-
 export function SlotCalendar({
   slots,
   isBooking,
@@ -57,10 +57,12 @@ export function SlotCalendar({
 }: SlotCalendarProps) {
   const slotsByDate = useMemo(() => {
     return slots.reduce<Record<string, CalendarSlot[]>>((acc, slot) => {
-      if (!acc[slot.slot_date]) {
-        acc[slot.slot_date] = [];
+      const localDateKey = toLocalDateKeyFromUtcSlot(slot.slot_date, slot.start_time);
+
+      if (!acc[localDateKey]) {
+        acc[localDateKey] = [];
       }
-      acc[slot.slot_date].push(slot);
+      acc[localDateKey].push(slot);
       return acc;
     }, {});
   }, [slots]);
@@ -230,7 +232,8 @@ export function SlotCalendar({
                   ].join(" ")}
                 >
                   <p className="font-medium">
-                    {formatHour(slot.start_time)} - {formatHour(slot.end_time)}
+                    {formatUtcSlotTimeLocal(slot.slot_date, slot.start_time)} -{" "}
+                    {formatUtcSlotTimeLocal(slot.slot_date, slot.end_time)}
                   </p>
                   <p className="text-xs">
                     {isCurrentBooking

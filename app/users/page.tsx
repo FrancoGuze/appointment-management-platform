@@ -47,7 +47,7 @@ interface SignupResponse {
 
 const USER_SESSION_STORAGE_KEY = "booking_user_session";
 
-export default function HomePage() {
+export default function UsersPage() {
   const router = useRouter();
   const [slots, setSlots] = useState<CalendarSlot[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -56,9 +56,6 @@ export default function HomePage() {
   const [isSigningUp, setIsSigningUp] = useState<boolean>(false);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
-  const [pendingBookingSlotId, setPendingBookingSlotId] = useState<string | null>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [authModalView, setAuthModalView] = useState<"login" | "signup">("login");
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -107,50 +104,16 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) {
+    if (!authUser) {
+      setSlots([]);
+      setIsLoading(false);
       return;
     }
 
     void loadSlots();
-  }, [isHydrated, loadSlots]);
+  }, [authUser, loadSlots]);
 
-  async function onBook(slotId: string): Promise<void> {
-    if (!authUser) {
-      setPendingBookingSlotId(slotId);
-      setAuthModalView("login");
-      setIsAuthModalOpen(true);
-      setError("You must be logged in to book an appointment");
-      return;
-    }
-
-    setIsBooking(true);
-    setActiveSlotId(slotId);
-    setError("");
-    setSuccess("");
-
-    try {
-      const response = await fetch("/api/appointments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotId }),
-      });
-
-      const payload = (await response.json()) as AppointmentResponse;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not create appointment");
-      }
-
-      setSuccess("Appointment booked successfully");
-      await loadSlots();
-    } catch (bookError) {
-      const message = bookError instanceof Error ? bookError.message : "Unexpected error";
-      setError(message);
-    } finally {
-      setIsBooking(false);
-      setActiveSlotId(null);
-    }
-  }
+  const hasSlots = slots.length > 0;
 
   async function onLogin(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -184,18 +147,10 @@ export default function HomePage() {
       window.localStorage.setItem(USER_SESSION_STORAGE_KEY, JSON.stringify(payload.data));
       setLoginPassword("");
       setSuccess("Login successful");
-      setIsAuthModalOpen(false);
 
       const redirectPath = new URLSearchParams(window.location.search).get("redirect");
       if (redirectPath && redirectPath.startsWith("/")) {
         router.push(redirectPath);
-        return;
-      }
-
-      if (pendingBookingSlotId) {
-        const slotId = pendingBookingSlotId;
-        setPendingBookingSlotId(null);
-        await onBook(slotId);
       }
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Unexpected error";
@@ -236,7 +191,6 @@ export default function HomePage() {
 
       setSuccess("Account created. You can sign in now.");
       setLoginEmail(signupEmail.trim());
-      setAuthModalView("login");
       setSignupFullName("");
       setSignupEmail("");
       setSignupPassword("");
@@ -256,130 +210,107 @@ export default function HomePage() {
     }
 
     setAuthUser(null);
-    setPendingBookingSlotId(null);
     setLoginPassword("");
+    setSlots([]);
     setError("");
     setSuccess("Session closed");
     window.localStorage.removeItem(USER_SESSION_STORAGE_KEY);
   }
 
+  async function onBook(slotId: string): Promise<void> {
+    if (!authUser) {
+      setError("You must be logged in to book an appointment");
+      return;
+    }
+
+    setIsBooking(true);
+    setActiveSlotId(slotId);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotId }),
+      });
+
+      const payload = (await response.json()) as AppointmentResponse;
+
+      if (!response.ok || !payload.ok || !payload.data) {
+        throw new Error(payload.error ?? "Could not create appointment");
+      }
+
+      setSuccess("Appointment booked successfully");
+      await loadSlots();
+    } catch (bookError) {
+      const message = bookError instanceof Error ? bookError.message : "Unexpected error";
+      setError(message);
+    } finally {
+      setIsBooking(false);
+      setActiveSlotId(null);
+    }
+  }
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
-      <h1 className="text-3xl font-semibold">Appointment booking</h1>
+      <h1 className="text-3xl font-semibold">Users portal</h1>
 
       {!isHydrated ? <p>Loading session...</p> : null}
 
-      {isHydrated ? (
+      {isHydrated && !authUser ? (
+        <section className="grid gap-4 md:grid-cols-2">
+          <SignupForm
+            fullName={signupFullName}
+            email={signupEmail}
+            password={signupPassword}
+            isSubmitting={isSigningUp}
+            onFullNameChange={setSignupFullName}
+            onEmailChange={setSignupEmail}
+            onPasswordChange={setSignupPassword}
+            onSubmit={(event) => void onSignup(event)}
+          />
+          <LoginForm
+            email={loginEmail}
+            password={loginPassword}
+            isSubmitting={isLoggingIn}
+            onEmailChange={setLoginEmail}
+            onPasswordChange={setLoginPassword}
+            onSubmit={(event) => void onLogin(event)}
+          />
+        </section>
+      ) : null}
+
+      {isHydrated && authUser ? (
         <section className="flex items-center justify-between rounded-xl border p-4">
           <div>
-            <p className="text-sm text-muted-foreground">
-              {authUser ? "Signed in as" : "Guest mode"}
-            </p>
-            <p className="font-medium">
-              {authUser ? authUser.email : "Browse slots and sign in to confirm booking"}
-            </p>
+            <p className="text-sm text-muted-foreground">Signed in as</p>
+            <p className="font-medium">{authUser.email}</p>
           </div>
-          {authUser ? (
-            <button
-              type="button"
-              onClick={() => void onLogout()}
-              className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-            >
-              Logout
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAuthModalView("login");
-                setIsAuthModalOpen(true);
-              }}
-              className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-            >
-              Login / Sign up
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void onLogout()}
+            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+          >
+            Logout
+          </button>
         </section>
       ) : null}
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {success ? <p className="text-sm text-green-600">{success}</p> : null}
 
-      {isHydrated && isLoading ? <p>Loading calendar...</p> : null}
+      {isHydrated && authUser && isLoading ? <p>Loading calendar...</p> : null}
 
-      {isHydrated && !isLoading && !slots.length ? <p>No slots available.</p> : null}
+      {isHydrated && authUser && !isLoading && !hasSlots ? <p>No slots available.</p> : null}
 
-      {isHydrated && !isLoading && slots.length ? (
+      {isHydrated && authUser && !isLoading && hasSlots ? (
         <SlotCalendar
           slots={slots}
           isBooking={isBooking}
           activeSlotId={activeSlotId}
           onBookSlot={onBook}
         />
-      ) : null}
-
-      {isAuthModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-xl border bg-background p-4 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {authModalView === "login" ? "Login" : "Create account"}
-              </h2>
-              <button
-                type="button"
-                className="rounded-md border px-2 py-1 text-sm hover:bg-muted"
-                onClick={() => setIsAuthModalOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mb-4 flex gap-2">
-              <button
-                type="button"
-                className={[
-                  "rounded-md border px-3 py-1 text-sm",
-                  authModalView === "login" ? "bg-muted" : "hover:bg-muted",
-                ].join(" ")}
-                onClick={() => setAuthModalView("login")}
-              >
-                Login
-              </button>
-              <button
-                type="button"
-                className={[
-                  "rounded-md border px-3 py-1 text-sm",
-                  authModalView === "signup" ? "bg-muted" : "hover:bg-muted",
-                ].join(" ")}
-                onClick={() => setAuthModalView("signup")}
-              >
-                Sign up
-              </button>
-            </div>
-
-            {authModalView === "login" ? (
-              <LoginForm
-                email={loginEmail}
-                password={loginPassword}
-                isSubmitting={isLoggingIn}
-                onEmailChange={setLoginEmail}
-                onPasswordChange={setLoginPassword}
-                onSubmit={(event) => void onLogin(event)}
-              />
-            ) : (
-              <SignupForm
-                fullName={signupFullName}
-                email={signupEmail}
-                password={signupPassword}
-                isSubmitting={isSigningUp}
-                onFullNameChange={setSignupFullName}
-                onEmailChange={setSignupEmail}
-                onPasswordChange={setSignupPassword}
-                onSubmit={(event) => void onSignup(event)}
-              />
-            )}
-          </div>
-        </div>
       ) : null}
     </main>
   );
