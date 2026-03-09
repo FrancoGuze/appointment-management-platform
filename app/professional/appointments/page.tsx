@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toastError, toastSuccess } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
 type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "no_show";
@@ -39,15 +40,14 @@ export default function ProfessionalAppointmentsPage() {
     try {
       const response = await fetch("/api/appointments", { method: "GET" });
       const payload = (await response.json()) as ApiResponse<Appointment[]>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not load appointments");
-      }
-
-      setAppointments(payload.data);
+      const data = requireApiData(
+        response,
+        payload,
+        "Could not load appointments"
+      );
+      setAppointments(data);
     } catch (loadError) {
-      const message =
-        loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load appointments");
       toastError(message);
     } finally {
       setIsLoading(false);
@@ -100,18 +100,18 @@ export default function ProfessionalAppointmentsPage() {
         body: JSON.stringify({ appointmentId, status }),
       });
       const payload = (await response.json()) as ApiResponse<Appointment>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not update appointment");
-      }
+      const data = requireApiData(
+        response,
+        payload,
+        "Could not update appointment"
+      );
 
       setAppointments((current) =>
-        current.map((item) => (item.id === payload.data?.id ? payload.data : item))
+        current.map((item) => (item.id === data.id ? data : item))
       );
-      toastSuccess(`Appointment ${payload.data.id} updated to ${payload.data.status}`);
+      toastSuccess(`Appointment ${data.id} updated to ${data.status}`);
     } catch (updateError) {
-      const message =
-        updateError instanceof Error ? updateError.message : "Unexpected error";
+      const message = getErrorMessage(updateError, "Could not update appointment");
       toastError(message);
     } finally {
       setIsSaving("");

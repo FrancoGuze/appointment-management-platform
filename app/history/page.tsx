@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toastError } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { UserNavbar } from "@/components/users/navbar";
 import {
-  readStoredAuthUser,
+  syncAuthUserFromServer,
+  clearStoredAuthUser,
   type AuthUser,
-  USER_SESSION_STORAGE_KEY,
 } from "@/src/lib/client-auth";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
@@ -47,14 +48,14 @@ export default function HistoryPage() {
     try {
       const response = await fetch("/api/appointments", { method: "GET" });
       const payload = (await response.json()) as ApiResponse<Appointment[]>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not fetch appointments");
-      }
-
-      setAppointments(payload.data);
+      const data = requireApiData(
+        response,
+        payload,
+        "Could not load appointments"
+      );
+      setAppointments(data);
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load appointments");
       toastError(message);
     } finally {
       setIsLoading(false);
@@ -62,8 +63,24 @@ export default function HistoryPage() {
   }, [authUser]);
 
   useEffect(() => {
-    setAuthUser(readStoredAuthUser());
-    setIsHydrated(true);
+    let isMounted = true;
+
+    async function bootstrapAuth(): Promise<void> {
+      const currentAuthUser = await syncAuthUserFromServer();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setAuthUser(currentAuthUser);
+      setIsHydrated(true);
+    }
+
+    void bootstrapAuth();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -79,7 +96,7 @@ export default function HistoryPage() {
 
     setAuthUser(null);
     setAppointments([]);
-    window.localStorage.removeItem(USER_SESSION_STORAGE_KEY);
+    clearStoredAuthUser();
   }
 
   const { upcoming, past, nextUpcomingId } = useMemo(() => {

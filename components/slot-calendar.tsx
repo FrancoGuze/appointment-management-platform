@@ -11,6 +11,7 @@ interface SlotCalendarProps {
   slots: CalendarSlot[];
   isBooking: boolean;
   activeSlotId: string | null;
+  isAuthenticated: boolean;
   onBookSlot: (slotId: string) => Promise<void>;
 }
 
@@ -53,6 +54,7 @@ export function SlotCalendar({
   slots,
   isBooking,
   activeSlotId,
+  isAuthenticated,
   onBookSlot,
 }: SlotCalendarProps) {
   const slotsByDate = useMemo(() => {
@@ -94,6 +96,8 @@ export function SlotCalendar({
   if (!availableDateKeys.length) {
     return <p>No slots available.</p>;
   }
+
+  const todayDateKey = toDateKey(new Date());
 
   const currentMonthStart = new Date(
     visibleMonth.getFullYear(),
@@ -150,36 +154,57 @@ export function SlotCalendar({
   }
 
   return (
-    <section className="grid gap-6 lg:grid-cols-[2fr_3fr]">
-      <article className="rounded-xl border p-4">
-        <div className="mb-4 flex items-center justify-between">
+    <section className="grid gap-4 lg:grid-cols-[2fr_3fr] lg:gap-6">
+      <article className="rounded-2xl border bg-card/70 p-3 shadow-sm sm:p-4">
+        <div className="mb-3 flex items-center justify-between sm:mb-4">
           <button
             type="button"
-            className="rounded-md border px-2 py-1 text-sm hover:bg-muted"
+            className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted sm:px-3 sm:py-2 sm:text-sm"
             onClick={onPrevMonth}
           >
-            Prev
+            {"<"}
           </button>
-          <h2 className="text-lg font-semibold">{monthLabel(visibleMonth)}</h2>
+          <div className="text-center">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">
+              Select a day
+            </p>
+            <h2 className="text-base font-semibold sm:text-lg">{monthLabel(visibleMonth)}</h2>
+          </div>
           <button
             type="button"
-            className="rounded-md border px-2 py-1 text-sm hover:bg-muted"
+            className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted sm:px-3 sm:py-2 sm:text-sm"
             onClick={onNextMonth}
           >
-            Next
+            {">"}
           </button>
         </div>
 
-        <div className="grid grid-cols-7 gap-2 text-center text-xs text-muted-foreground">
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] uppercase tracking-wide text-muted-foreground sm:gap-2 sm:text-[11px]">
           {weekdayHeaders().map((weekday) => (
             <div key={weekday}>{weekday}</div>
           ))}
         </div>
 
-        <div className="mt-2 grid grid-cols-7 gap-2">
+        <div className="mt-2 grid grid-cols-7 gap-1 sm:gap-2">
           {dayCells.map((cell) => {
             const isSelected = selectedDate === cell.dateKey;
-            const baseClass = cell.inCurrentMonth ? "" : "opacity-40";
+            const isToday = cell.dateKey === todayDateKey;
+            const totalCount = cell.availableCount + cell.occupiedCount;
+            const baseClass = cell.inCurrentMonth ? "" : "opacity-35";
+            const selectedClass = isSelected
+              ? "border-primary bg-primary/10 ring-2 ring-primary/20"
+              : "hover:bg-muted/60";
+            const todayClass = isToday ? "ring-1 ring-accent/60" : "";
+            const availabilityClass = cell.hasSlots
+              ? cell.occupiedCount === totalCount
+                ? "border-red-900"
+                : cell.occupiedCount > totalCount / 2 &&
+                    cell.occupiedCount < totalCount
+                  ? "border-rose-300/70"
+                  : cell.occupiedCount < totalCount / 2
+                    ? "border-emerald-300/70"
+                    : "border-orange-300/70"
+              : "";
 
             return (
               <button
@@ -188,36 +213,49 @@ export function SlotCalendar({
                 disabled={!cell.hasSlots}
                 onClick={() => onSelectDate(cell.dateKey)}
                 className={[
-                  "min-h-[4.5rem] rounded-md border p-2 text-left text-xs",
+                  "aspect-square flex items-center justify-center rounded-lg border p-1.5 text-left text-[11px] transition sm:rounded-xl sm:p-2 sm:text-xs",
                   "disabled:cursor-not-allowed disabled:opacity-35",
-                  isSelected ? "border-primary bg-primary/10" : "hover:bg-muted",
+                  selectedClass,
+                  todayClass,
+                  availabilityClass,
                   baseClass,
                 ].join(" ")}
               >
-                <p className="text-sm font-medium">{cell.date.getDate()}</p>
-                {cell.hasSlots ? (
-                  <p className="mt-1 text-[11px]">
-                    A:{cell.availableCount} O:{cell.occupiedCount}
-                  </p>
-                ) : null}
+                <p className="text-xs font-semibold sm:text-sm">{cell.date.getDate()}</p>
+
               </button>
             );
           })}
         </div>
       </article>
 
-      <article className="rounded-xl border p-4">
-        <h3 className="mb-3 text-lg font-semibold">
+      <article className="rounded-2xl border bg-card/70 p-3 shadow-sm sm:p-4">
+        <h3 className="mb-1 text-base font-semibold sm:text-lg">
           {selectedDate ? formatSelectedDate(selectedDate) : "Choose a date"}
         </h3>
+        <p className="mb-3 text-xs text-muted-foreground sm:text-sm">
+          {selectedSlots.filter((slot) => slot.availability === "available").length} available
+          {" · "}
+          {selectedSlots.filter((slot) => slot.availability === "occupied").length} occupied
+        </p>
 
+        {!isAuthenticated ? (
+          <p className="mb-3 text-sm text-muted-foreground">
+            You must log in to make an appointment.
+          </p>
+        ) : null}
         {!selectedSlots.length ? <p>No slots for this date.</p> : null}
 
         {selectedSlots.length ? (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {selectedSlots.map((slot) => {
               const isCurrentBooking = isBooking && activeSlotId === slot.id;
               const isOccupied = slot.availability === "occupied";
+              const slotStatusLabel = isCurrentBooking
+                ? "Booking..."
+                : isOccupied
+                  ? "Occupied"
+                  : "Available";
 
               return (
                 <button
@@ -226,21 +264,26 @@ export function SlotCalendar({
                   onClick={() => void onBookSlot(slot.id)}
                   disabled={isBooking || isOccupied}
                   className={[
-                    "rounded-md border px-3 py-2 text-left text-sm",
+                    "rounded-xl border px-3 py-2.5 text-left text-sm transition sm:py-3",
                     "disabled:cursor-not-allowed disabled:opacity-60",
-                    isOccupied ? "border-slate-300 bg-slate-100 text-slate-500" : "hover:bg-muted",
+                    isOccupied
+                      ? "border-slate-300 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-400"
+                      : "border-border hover:bg-muted/60",
                   ].join(" ")}
                 >
-                  <p className="font-medium">
+                  <p className="text-sm font-medium">
                     {formatUtcSlotTimeLocal(slot.slot_date, slot.start_time)} -{" "}
                     {formatUtcSlotTimeLocal(slot.slot_date, slot.end_time)}
                   </p>
-                  <p className="text-xs">
-                    {isCurrentBooking
-                      ? "Booking..."
-                      : isOccupied
-                        ? "Occupied"
-                        : "Available"}
+                  <p
+                    className={[
+                      "mt-1 inline-flex rounded px-2 py-0.5 text-[11px] sm:text-xs",
+                      isOccupied
+                        ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200",
+                    ].join(" ")}
+                  >
+                    {slotStatusLabel}
                   </p>
                 </button>
               );

@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toastError, toastSuccess } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { UserNavbar } from "@/components/users/navbar";
 import {
-  readStoredAuthUser,
+  syncAuthUserFromServer,
+  storeAuthUser,
+  clearStoredAuthUser,
   type AuthUser,
-  USER_SESSION_STORAGE_KEY,
 } from "@/src/lib/client-auth";
 
 interface ApiResponse<T> {
@@ -43,16 +45,13 @@ export default function ProfilePage() {
     try {
       const response = await fetch("/api/users/me", { method: "GET" });
       const payload = (await response.json()) as ApiResponse<UserProfile>;
+      const data = requireApiData(response, payload, "Could not load profile");
 
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not fetch profile");
-      }
-
-      setProfile(payload.data);
-      setFullName(payload.data.fullName ?? "");
-      setEmail(payload.data.email);
+      setProfile(data);
+      setFullName(data.fullName ?? "");
+      setEmail(data.email);
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load profile");
       toastError(message);
     } finally {
       setIsLoading(false);
@@ -60,8 +59,24 @@ export default function ProfilePage() {
   }, [authUser]);
 
   useEffect(() => {
-    setAuthUser(readStoredAuthUser());
-    setIsHydrated(true);
+    let isMounted = true;
+
+    async function bootstrapAuth(): Promise<void> {
+      const currentAuthUser = await syncAuthUserFromServer();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setAuthUser(currentAuthUser);
+      setIsHydrated(true);
+    }
+
+    void bootstrapAuth();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -77,7 +92,7 @@ export default function ProfilePage() {
 
     setAuthUser(null);
     setProfile(null);
-    window.localStorage.removeItem(USER_SESSION_STORAGE_KEY);
+    clearStoredAuthUser();
   }
 
   async function onSave(event: React.FormEvent<HTMLFormElement>): Promise<void> {
@@ -101,25 +116,22 @@ export default function ProfilePage() {
       });
 
       const payload = (await response.json()) as ApiResponse<UserProfile>;
+      const data = requireApiData(response, payload, "Could not update profile");
 
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not update profile");
-      }
-
-      setProfile(payload.data);
-      setEmail(payload.data.email);
-      setFullName(payload.data.fullName ?? "");
+      setProfile(data);
+      setEmail(data.email);
+      setFullName(data.fullName ?? "");
 
       const updatedAuthUser: AuthUser = {
-        userId: payload.data.userId,
-        email: payload.data.email,
+        userId: data.userId,
+        email: data.email,
       };
       setAuthUser(updatedAuthUser);
-      window.localStorage.setItem(USER_SESSION_STORAGE_KEY, JSON.stringify(updatedAuthUser));
+      storeAuthUser(updatedAuthUser);
 
       toastSuccess("Profile updated");
     } catch (saveError) {
-      const message = saveError instanceof Error ? saveError.message : "Unexpected error";
+      const message = getErrorMessage(saveError, "Could not update profile");
       toastError(message);
     } finally {
       setIsSaving(false);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toastError, toastSuccess } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 
 type UserRole = "client" | "professional" | "admin";
 
@@ -41,15 +42,10 @@ export default function UsersManagementPage() {
     try {
       const response = await fetch("/api/users", { method: "GET" });
       const payload = (await response.json()) as ApiResponse<UserSummary[]>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not load users");
-      }
-
-      setUsers(payload.data);
+      const data = requireApiData(response, payload, "Could not load users");
+      setUsers(data);
     } catch (loadError) {
-      const message =
-        loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load users");
       toastError(message);
     } finally {
       setIsLoading(false);
@@ -71,20 +67,16 @@ export default function UsersManagementPage() {
       });
 
       const payload = (await response.json()) as ApiResponse<UserSummary>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not update role");
-      }
+      const data = requireApiData(response, payload, "Could not update role");
 
       setUsers((currentUsers) =>
         currentUsers.map((user) =>
-          user.userId === payload.data?.userId ? payload.data : user
+          user.userId === data.userId ? data : user
         )
       );
-      toastSuccess(`Role updated for ${payload.data.email}`);
+      toastSuccess(`Role updated for ${data.email}`);
     } catch (updateError) {
-      const message =
-        updateError instanceof Error ? updateError.message : "Unexpected error";
+      const message = getErrorMessage(updateError, "Could not update role");
       toastError(message);
     } finally {
       setIsSaving("");

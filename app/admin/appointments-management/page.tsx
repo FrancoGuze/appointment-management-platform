@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toastError, toastSuccess } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
 type UserRole = "client" | "professional" | "admin";
@@ -57,24 +58,21 @@ export default function AppointmentsManagementPage() {
       const usersPayload = (await usersResponse.json()) as ApiResponse<UserSummary[]>;
       const appointmentsPayload =
         (await appointmentsResponse.json()) as ApiResponse<Appointment[]>;
+      const usersData = requireApiData(
+        usersResponse,
+        usersPayload,
+        "Could not load users"
+      );
+      const appointmentsData = requireApiData(
+        appointmentsResponse,
+        appointmentsPayload,
+        "Could not load appointments"
+      );
 
-      if (!usersResponse.ok || !usersPayload.ok || !usersPayload.data) {
-        throw new Error(usersPayload.error ?? "Could not load users");
-      }
-
-      if (
-        !appointmentsResponse.ok ||
-        !appointmentsPayload.ok ||
-        !appointmentsPayload.data
-      ) {
-        throw new Error(appointmentsPayload.error ?? "Could not load appointments");
-      }
-
-      setUsers(usersPayload.data);
-      setAppointments(appointmentsPayload.data);
+      setUsers(usersData);
+      setAppointments(appointmentsData);
     } catch (loadError) {
-      const message =
-        loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load data");
       toastError(message);
     } finally {
       setIsLoading(false);
@@ -141,22 +139,22 @@ export default function AppointmentsManagementPage() {
       });
 
       const payload = (await response.json()) as ApiResponse<Appointment>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not assign professional");
-      }
+      const data = requireApiData(
+        response,
+        payload,
+        "Could not assign professional"
+      );
 
       setAppointments((currentAppointments) =>
         currentAppointments.map((appointment) =>
-          appointment.id === payload.data?.id
-            ? { ...appointment, ...payload.data }
+          appointment.id === data.id
+            ? { ...appointment, ...data }
             : appointment
         )
       );
-      toastSuccess(`Professional assignment updated for ${payload.data.id}`);
+      toastSuccess(`Professional assignment updated for ${data.id}`);
     } catch (assignError) {
-      const message =
-        assignError instanceof Error ? assignError.message : "Unexpected error";
+      const message = getErrorMessage(assignError, "Could not assign professional");
       toastError(message);
     } finally {
       setIsSaving("");
@@ -177,22 +175,18 @@ export default function AppointmentsManagementPage() {
       });
 
       const payload = (await response.json()) as ApiResponse<Appointment>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not update status");
-      }
+      const data = requireApiData(response, payload, "Could not update status");
 
       setAppointments((currentAppointments) =>
         currentAppointments.map((appointment) =>
-          appointment.id === payload.data?.id
-            ? { ...appointment, ...payload.data }
+          appointment.id === data.id
+            ? { ...appointment, ...data }
             : appointment
         )
       );
-      toastSuccess(`Status updated for ${payload.data.id}`);
+      toastSuccess(`Status updated for ${data.id}`);
     } catch (statusError) {
-      const message =
-        statusError instanceof Error ? statusError.message : "Unexpected error";
+      const message = getErrorMessage(statusError, "Could not update status");
       toastError(message);
     } finally {
       setIsSaving("");

@@ -50,7 +50,7 @@ export function LoginForm({
           disabled={isSubmitting}
           className="mt-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isSubmitting ? "Signing in..." : "Sign in"}
+          {isSubmitting ? "Log in..." : "Log in"}
         </button>
       </form>
     </section>

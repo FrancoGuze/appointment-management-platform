@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toastError } from "@/src/lib/notify";
+import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
 type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "no_show";
@@ -50,15 +51,14 @@ export default function ProfessionalHistoryPage() {
     try {
       const response = await fetch("/api/appointments", { method: "GET" });
       const payload = (await response.json()) as ApiResponse<Appointment[]>;
-
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error ?? "Could not load appointments");
-      }
-
-      setAppointments(payload.data);
+      const data = requireApiData(
+        response,
+        payload,
+        "Could not load appointments"
+      );
+      setAppointments(data);
     } catch (loadError) {
-      const message =
-        loadError instanceof Error ? loadError.message : "Unexpected error";
+      const message = getErrorMessage(loadError, "Could not load appointments");
       toastError(message);
     } finally {
       setIsLoading(false);
