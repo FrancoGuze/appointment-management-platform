@@ -10,13 +10,13 @@ export default function AdminPage() {
       <article className="rounded-xl border p-4">
         <h2 className="text-lg font-semibold">Users</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Go to Users managment to update user roles.
+          Go to Users management to update user roles.
         </p>
       </article>
       <article className="rounded-xl border p-4">
         <h2 className="text-lg font-semibold">Appointments</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Go to Appointments managment to assign professionals and update statuses.
+          Go to Appointments management to assign professionals and update statuses.
         </p>
       </article>
     </section>

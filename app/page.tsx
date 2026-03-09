@@ -1,11 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toastError, toastSuccess } from "@/src/lib/notify";
 import { SlotCalendar } from "@/components/slot-calendar";
 import { LoginForm } from "@/components/users/login-form";
+import { UserNavbar } from "@/components/users/navbar";
 import { SignupForm } from "@/components/users/signup-form";
+import {
+  readStoredAuthUser,
+  type AuthUser,
+  USER_SESSION_STORAGE_KEY,
+} from "@/src/lib/client-auth";
+import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 import type { CalendarSlot } from "@/src/services/slots";
+import { toast } from "sonner";
 
 interface ApiListResponse<T> {
   ok: boolean;
@@ -17,20 +26,19 @@ interface Appointment {
   id: string;
   slot_id: string;
   user_id: string;
+  slot_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   status: "scheduled" | "completed" | "cancelled" | "no_show";
   notes: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 interface AppointmentResponse {
   ok: boolean;
   data?: Appointment;
   error?: string;
-}
-
-interface AuthUser {
-  userId: string;
-  email: string;
 }
 
 interface LoginResponse {
@@ -41,14 +49,13 @@ interface LoginResponse {
 
 interface SignupResponse {
   ok: boolean;
-  data?: { userId: string; email: string };
+  data?: AuthUser;
   error?: string;
 }
 
-const USER_SESSION_STORAGE_KEY = "booking_user_session";
-
 export default function HomePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [slots, setSlots] = useState<CalendarSlot[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isBooking, setIsBooking] = useState<boolean>(false);
@@ -59,9 +66,9 @@ export default function HomePage() {
   const [pendingBookingSlotId, setPendingBookingSlotId] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalView, setAuthModalView] = useState<"login" | "signup">("login");
-  const [error, setError] = useState<string>("");
-  const [success, setSuccess] = useState<string>("");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [nextAppointment, setNextAppointment] = useState<Appointment | null>(null);
+  const [isLoadingNextAppointment, setIsLoadingNextAppointment] = useState<boolean>(false);
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginPassword, setLoginPassword] = useState<string>("");
   const [signupFullName, setSignupFullName] = useState<string>("");
@@ -70,7 +77,6 @@ export default function HomePage() {
 
   const loadSlots = useCallback(async (): Promise<void> => {
     setIsLoading(true);
-    setError("");
 
     try {
       const response = await fetch("/api/slots", { method: "GET" });
@@ -83,28 +89,72 @@ export default function HomePage() {
       setSlots(payload.data);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    try {
-      const storedSession = window.localStorage.getItem(USER_SESSION_STORAGE_KEY);
-
-      if (storedSession) {
-        const parsedUser = JSON.parse(storedSession) as AuthUser;
-        if (parsedUser.userId && parsedUser.email) {
-          setAuthUser(parsedUser);
-        }
-      }
-    } catch {
-      window.localStorage.removeItem(USER_SESSION_STORAGE_KEY);
-    } finally {
-      setIsHydrated(true);
+  const loadNextAppointment = useCallback(async (): Promise<void> => {
+    if (!authUser) {
+      setNextAppointment(null);
+      setIsLoadingNextAppointment(false);
+      return;
     }
+
+    setIsLoadingNextAppointment(true);
+
+    try {
+      const response = await fetch("/api/appointments", { method: "GET" });
+      const payload = (await response.json()) as ApiListResponse<Appointment[]>;
+
+      if (!response.ok || !payload.ok || !payload.data) {
+        throw new Error(payload.error ?? "Could not fetch appointments");
+      }
+
+      const nowMs = Date.now();
+      const upcoming = payload.data
+        .filter(
+          (appointment) =>
+            appointment.status === "scheduled" &&
+            Boolean(appointment.slot_date) &&
+            Boolean(appointment.start_time)
+        )
+        .map((appointment) => {
+          const timestamp = Date.parse(
+            `${appointment.slot_date}T${appointment.start_time}Z`
+          );
+          return { appointment, timestamp };
+        })
+        .filter((item) => Number.isFinite(item.timestamp) && item.timestamp >= nowMs)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      setNextAppointment(upcoming[0]?.appointment ?? null);
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Unexpected error";
+      toastError(message);
+      setNextAppointment(null);
+    } finally {
+      setIsLoadingNextAppointment(false);
+    }
+  }, [authUser]);
+
+  useEffect(() => {
+    setAuthUser(readStoredAuthUser());
+    setIsHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!isHydrated || authUser) {
+      return;
+    }
+
+    const authQuery = searchParams.get("auth");
+    if (authQuery === "1") {
+      setAuthModalView("login");
+      setIsAuthModalOpen(true);
+    }
+  }, [authUser, isHydrated, searchParams]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -114,19 +164,25 @@ export default function HomePage() {
     void loadSlots();
   }, [isHydrated, loadSlots]);
 
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+
+    void loadNextAppointment();
+  }, [authUser, isHydrated, loadNextAppointment]);
+
   async function onBook(slotId: string): Promise<void> {
     if (!authUser) {
       setPendingBookingSlotId(slotId);
       setAuthModalView("login");
       setIsAuthModalOpen(true);
-      setError("You must be logged in to book an appointment");
+      toastError("You must be logged in to book an appointment");
       return;
     }
 
     setIsBooking(true);
     setActiveSlotId(slotId);
-    setError("");
-    setSuccess("");
 
     try {
       const response = await fetch("/api/appointments", {
@@ -141,11 +197,12 @@ export default function HomePage() {
         throw new Error(payload.error ?? "Could not create appointment");
       }
 
-      setSuccess("Appointment booked successfully");
+      toastSuccess("Appointment booked successfully");
       await loadSlots();
+      await loadNextAppointment();
     } catch (bookError) {
       const message = bookError instanceof Error ? bookError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsBooking(false);
       setActiveSlotId(null);
@@ -156,13 +213,11 @@ export default function HomePage() {
     event.preventDefault();
 
     if (!loginEmail.trim() || !loginPassword) {
-      setError("Email and password are required");
+      toastError("Email and password are required");
       return;
     }
 
     setIsLoggingIn(true);
-    setError("");
-    setSuccess("");
 
     try {
       const response = await fetch("/api/users/login", {
@@ -183,7 +238,7 @@ export default function HomePage() {
       setAuthUser(payload.data);
       window.localStorage.setItem(USER_SESSION_STORAGE_KEY, JSON.stringify(payload.data));
       setLoginPassword("");
-      setSuccess("Login successful");
+      toastSuccess("Login successful");
       setIsAuthModalOpen(false);
 
       const redirectPath = new URLSearchParams(window.location.search).get("redirect");
@@ -199,7 +254,7 @@ export default function HomePage() {
       }
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsLoggingIn(false);
     }
@@ -209,13 +264,11 @@ export default function HomePage() {
     event.preventDefault();
 
     if (!signupFullName.trim() || !signupEmail.trim() || !signupPassword) {
-      setError("full_name, email and password are required");
+      toastError("full_name, email and password are required");
       return;
     }
 
     setIsSigningUp(true);
-    setError("");
-    setSuccess("");
 
     try {
       const response = await fetch("/api/users/signup", {
@@ -234,15 +287,30 @@ export default function HomePage() {
         throw new Error(payload.error ?? "Could not create account");
       }
 
-      setSuccess("Account created. You can sign in now.");
-      setLoginEmail(signupEmail.trim());
-      setAuthModalView("login");
+      setAuthUser(payload.data);
+      window.localStorage.setItem(USER_SESSION_STORAGE_KEY, JSON.stringify(payload.data));
+      toastSuccess("Account created and session started");
+      setLoginEmail(payload.data.email);
+      setLoginPassword("");
+      setIsAuthModalOpen(false);
       setSignupFullName("");
       setSignupEmail("");
       setSignupPassword("");
+
+      const redirectPath = new URLSearchParams(window.location.search).get("redirect");
+      if (redirectPath && redirectPath.startsWith("/")) {
+        router.push(redirectPath);
+        return;
+      }
+
+      if (pendingBookingSlotId) {
+        const slotId = pendingBookingSlotId;
+        setPendingBookingSlotId(null);
+        await onBook(slotId);
+      }
     } catch (signupError) {
       const message = signupError instanceof Error ? signupError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsSigningUp(false);
     }
@@ -256,54 +324,63 @@ export default function HomePage() {
     }
 
     setAuthUser(null);
+    setNextAppointment(null);
     setPendingBookingSlotId(null);
     setLoginPassword("");
-    setError("");
-    setSuccess("Session closed");
+    toastSuccess("Session closed");
     window.localStorage.removeItem(USER_SESSION_STORAGE_KEY);
   }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
-      <h1 className="text-3xl font-semibold">Appointment booking</h1>
-
+      <h1 className="text-3xl font-semibold">Appointment booking System</h1>
+<button onClick={()=> toast.success("aaaaaaaa")}>ACA</button>
+<button onClick={()=> toast.error("aaaaaaaa")}>ACA</button>
       {!isHydrated ? <p>Loading session...</p> : null}
 
       {isHydrated ? (
-        <section className="flex items-center justify-between rounded-xl border p-4">
-          <div>
-            <p className="text-sm text-muted-foreground">
-              {authUser ? "Signed in as" : "Guest mode"}
-            </p>
-            <p className="font-medium">
-              {authUser ? authUser.email : "Browse slots and sign in to confirm booking"}
-            </p>
-          </div>
-          {authUser ? (
-            <button
-              type="button"
-              onClick={() => void onLogout()}
-              className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-            >
-              Logout
-            </button>
+        <UserNavbar
+          authUser={authUser}
+          onLogout={onLogout}
+          onOpenAuth={() => {
+            setAuthModalView("login");
+            setIsAuthModalOpen(true);
+          }}
+        />
+      ) : null}
+
+      {isHydrated && authUser ? (
+        <section className="rounded-xl border p-4">
+          <h2 className="text-lg font-semibold">Your next appointment</h2>
+          {isLoadingNextAppointment ? (
+            <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
+          ) : nextAppointment ? (
+            <div className="mt-2 text-sm">
+              <p>
+                {formatUtcSlotDateLocal(
+                  nextAppointment.slot_date,
+                  nextAppointment.start_time
+                )}
+              </p>
+              <p className="text-muted-foreground">
+                {formatUtcSlotTimeLocal(
+                  nextAppointment.slot_date,
+                  nextAppointment.start_time
+                )}{" "}
+                -{" "}
+                {formatUtcSlotTimeLocal(nextAppointment.slot_date, nextAppointment.end_time)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Appointment id: {nextAppointment.id}
+              </p>
+            </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAuthModalView("login");
-                setIsAuthModalOpen(true);
-              }}
-              className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-            >
-              Login / Sign up
-            </button>
+            <p className="mt-2 text-sm text-muted-foreground">
+              No upcoming appointments.
+            </p>
           )}
         </section>
       ) : null}
-
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {success ? <p className="text-sm text-green-600">{success}</p> : null}
 
       {isHydrated && isLoading ? <p>Loading calendar...</p> : null}
 
@@ -384,3 +461,4 @@ export default function HomePage() {
     </main>
   );
 }
+

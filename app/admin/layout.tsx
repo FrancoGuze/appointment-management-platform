@@ -15,16 +15,16 @@ export default function AdminLayout({
             Overview
           </Link>
           <Link
-            href="/admin/users-managment"
+            href="/admin/users-management"
             className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
           >
-            Users managment
+            Users management
           </Link>
           <Link
-            href="/admin/appointments-managment"
+            href="/admin/appointments-management"
             className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
           >
-            Appointments managment
+            Appointments management
           </Link>
         </nav>
       </header>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toastError, toastSuccess } from "@/src/lib/notify";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
 type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "no_show";
@@ -30,13 +31,10 @@ export default function ProfessionalAppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [success, setSuccess] = useState<string>("");
   const [sortBy, setSortBy] = useState<AppointmentSort>("recently_updated");
 
   const loadAppointments = useCallback(async (): Promise<void> => {
     setIsLoading(true);
-    setError("");
 
     try {
       const response = await fetch("/api/appointments", { method: "GET" });
@@ -50,7 +48,7 @@ export default function ProfessionalAppointmentsPage() {
     } catch (loadError) {
       const message =
         loadError instanceof Error ? loadError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsLoading(false);
     }
@@ -94,8 +92,6 @@ export default function ProfessionalAppointmentsPage() {
     status: "completed" | "cancelled" | "no_show"
   ): Promise<void> {
     setIsSaving(appointmentId);
-    setError("");
-    setSuccess("");
 
     try {
       const response = await fetch("/api/appointments", {
@@ -112,11 +108,11 @@ export default function ProfessionalAppointmentsPage() {
       setAppointments((current) =>
         current.map((item) => (item.id === payload.data?.id ? payload.data : item))
       );
-      setSuccess(`Appointment ${payload.data.id} updated to ${payload.data.status}`);
+      toastSuccess(`Appointment ${payload.data.id} updated to ${payload.data.status}`);
     } catch (updateError) {
       const message =
         updateError instanceof Error ? updateError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsSaving("");
     }
@@ -143,8 +139,6 @@ export default function ProfessionalAppointmentsPage() {
         </label>
       </div>
 
-      {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
-      {success ? <p className="mt-4 text-sm text-green-600">{success}</p> : null}
       {isLoading ? <p className="mt-4">Loading appointments...</p> : null}
 
       {!isLoading && incomingAppointments.length === 0 ? (
@@ -208,3 +202,4 @@ export default function ProfessionalAppointmentsPage() {
     </section>
   );
 }
+

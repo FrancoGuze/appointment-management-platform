@@ -13,11 +13,13 @@ export interface SignUpInput {
 export interface SignUpResponse {
   userId: string;
   email: string;
+  role: UserRole;
 }
 
 interface PublicUserRow {
   id: string;
   email: string;
+  role?: string | null;
 }
 
 interface RawUserRow {
@@ -46,6 +48,19 @@ export interface UserSummary {
   fullName: string | null;
   role: UserRole;
   createdAt: string | null;
+}
+
+export interface UserProfile {
+  userId: string;
+  email: string;
+  fullName: string | null;
+  createdAt: string | null;
+}
+
+export interface UpdateUserProfileInput {
+  userId: string;
+  email?: string;
+  fullName?: string;
 }
 
 function normalizeRole(role: string | null | undefined): UserRole {
@@ -102,7 +117,7 @@ export async function signUpUser(input: SignUpInput): Promise<SignUpResponse> {
       password_hash: passwordHash,
       full_name: input.full_name
     })
-    .select("id, email")
+    .select("id, email, role")
     .single();
 
   if (error) {
@@ -116,6 +131,7 @@ export async function signUpUser(input: SignUpInput): Promise<SignUpResponse> {
   return {
     userId: user.id,
     email: user.email,
+    role: normalizeRole(user.role),
   };
 }
 
@@ -182,6 +198,70 @@ export async function getUserById(userId: string): Promise<LoginResponse | null>
     userId: user.id,
     email: user.email,
     role: normalizeRole(user.role),
+  };
+}
+
+export async function getUserProfileById(userId: string): Promise<UserProfile | null> {
+  const { data, error } = await supabase
+    .schema("public")
+    .from("users")
+    .select("id, email, full_name, created_at")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ServiceError(error.message, 500);
+  }
+
+  const user = data as RawUserRow | null;
+
+  if (!user) {
+    return null;
+  }
+
+  return {
+    userId: user.id,
+    email: user.email,
+    fullName: user.full_name ?? null,
+    createdAt: user.created_at ?? null,
+  };
+}
+
+export async function updateUserProfile(
+  input: UpdateUserProfileInput
+): Promise<UserProfile> {
+  const updates: Record<string, string> = {};
+
+  if (input.email !== undefined) {
+    updates.email = input.email;
+  }
+
+  if (input.fullName !== undefined) {
+    updates.full_name = input.fullName;
+  }
+
+  const { data, error } = await supabase
+    .schema("public")
+    .from("users")
+    .update(updates)
+    .eq("id", input.userId)
+    .select("id, email, full_name, created_at")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new ServiceError("Email already exists", 409);
+    }
+    throw new ServiceError(error.message, 500);
+  }
+
+  const user = data as RawUserRow;
+
+  return {
+    userId: user.id,
+    email: user.email,
+    fullName: user.full_name ?? null,
+    createdAt: user.created_at ?? null,
   };
 }
 

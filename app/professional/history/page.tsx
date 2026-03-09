@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toastError } from "@/src/lib/notify";
 import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
 
 type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "no_show";
@@ -37,7 +38,6 @@ function toDateValue(slotDate: string | null): number {
 export default function ProfessionalHistoryPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | "completed" | "cancelled" | "no_show"
   >("all");
@@ -46,7 +46,6 @@ export default function ProfessionalHistoryPage() {
 
   const loadAppointments = useCallback(async (): Promise<void> => {
     setIsLoading(true);
-    setError("");
 
     try {
       const response = await fetch("/api/appointments", { method: "GET" });
@@ -60,7 +59,7 @@ export default function ProfessionalHistoryPage() {
     } catch (loadError) {
       const message =
         loadError instanceof Error ? loadError.message : "Unexpected error";
-      setError(message);
+      toastError(message);
     } finally {
       setIsLoading(false);
     }
@@ -155,7 +154,6 @@ export default function ProfessionalHistoryPage() {
         </label>
       </div>
 
-      {error ? <p className="px-4 pt-4 text-sm text-red-600">{error}</p> : null}
       {isLoading ? <p className="px-4 py-4">Loading history...</p> : null}
 
       {!isLoading ? (
@@ -222,3 +220,4 @@ export default function ProfessionalHistoryPage() {
     </section>
   );
 }
+
