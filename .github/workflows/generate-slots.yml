@@ -2,7 +2,7 @@ name: Generate Slots
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 jobs:
