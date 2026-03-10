@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+/ai
+/ai/*
 /.pnp
 .pnp.*
 .yarn/*
