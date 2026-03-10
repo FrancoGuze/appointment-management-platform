@@ -2,57 +2,60 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toastError, toastSuccess } from "@/src/lib/notify";
-import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
-import { SlotCalendar } from "@/components/slot-calendar";
-import { LoginForm } from "@/components/users/login-form";
-import { UserNavbar } from "@/components/users/navbar";
-import { SignupForm } from "@/components/users/signup-form";
+import { SlotCalendar } from "@/components/calendar/slot-calendar";
+import { AuthModal, type AuthModalView } from "@/components/home/auth-modal";
+import { BookingModal } from "@/components/home/booking-modal";
+import { NextAppointmentCard } from "@/components/home/next-appointment-card";
 import QueryRedirectHandler from "@/components/query-redirect-handler";
+import { UserNavbar } from "@/components/users/navbar";
+import { getErrorMessage } from "@/src/lib/api-client";
 import {
-  syncAuthUserFromServer,
-  storeAuthUser,
   clearStoredAuthUser,
+  storeAuthUser,
+  syncAuthUserFromServer,
   type AuthUser,
 } from "@/src/lib/client-auth";
-import { formatUtcSlotDateLocal, formatUtcSlotTimeLocal } from "@/src/lib/datetime";
+import { toastError, toastSuccess } from "@/src/lib/notify";
+import { type Appointment, createAppointment, fetchAppointments } from "@/src/services/appointments-client";
 import type { CalendarSlot } from "@/src/services/slots";
+import { fetchSlots } from "@/src/services/slots-client";
+import { loginUser, logoutUser, signupUser } from "@/src/services/users-client";
 
-interface ApiListResponse<T> {
-  ok: boolean;
-  data?: T;
-  error?: string;
+interface AuthModalState {
+  isOpen: boolean;
+  view: AuthModalView;
 }
 
-interface Appointment {
-  id: string;
-  slot_id: string;
-  user_id: string;
-  slot_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  status: "scheduled" | "completed" | "cancelled" | "no_show";
-  notes: string | null;
-  created_at: string;
-  updated_at: string | null;
+interface LoginFormState {
+  email: string;
+  password: string;
 }
 
-interface AppointmentResponse {
-  ok: boolean;
-  data?: Appointment;
-  error?: string;
+interface SignupFormState {
+  fullName: string;
+  email: string;
+  password: string;
 }
 
-interface LoginResponse {
-  ok: boolean;
-  data?: AuthUser;
-  error?: string;
-}
+function pickNextAppointment(appointments: Appointment[]): Appointment | null {
+  const nowMs = Date.now();
+  const upcoming = appointments
+    .filter(
+      (appointment) =>
+        appointment.status === "scheduled" &&
+        Boolean(appointment.slot_date) &&
+        Boolean(appointment.start_time)
+    )
+    .map((appointment) => {
+      const timestamp = Date.parse(
+        `${appointment.slot_date}T${appointment.start_time}Z`
+      );
+      return { appointment, timestamp };
+    })
+    .filter((item) => Number.isFinite(item.timestamp) && item.timestamp >= nowMs)
+    .sort((a, b) => a.timestamp - b.timestamp);
 
-interface SignupResponse {
-  ok: boolean;
-  data?: AuthUser;
-  error?: string;
+  return upcoming[0]?.appointment ?? null;
 }
 
 export default function HomeClient() {
@@ -66,25 +69,29 @@ export default function HomeClient() {
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
   const [pendingBookingSlotId, setPendingBookingSlotId] = useState<string | null>(null);
   const [bookingCandidateSlot, setBookingCandidateSlot] = useState<CalendarSlot | null>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [authModalView, setAuthModalView] = useState<"login" | "signup">("login");
+  const [authModal, setAuthModal] = useState<AuthModalState>({
+    isOpen: false,
+    view: "login",
+  });
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [nextAppointment, setNextAppointment] = useState<Appointment | null>(null);
   const [isLoadingNextAppointment, setIsLoadingNextAppointment] = useState<boolean>(false);
-  const [loginEmail, setLoginEmail] = useState<string>("");
-  const [loginPassword, setLoginPassword] = useState<string>("");
-  const [signupFullName, setSignupFullName] = useState<string>("");
-  const [signupEmail, setSignupEmail] = useState<string>("");
-  const [signupPassword, setSignupPassword] = useState<string>("");
+  const [loginForm, setLoginForm] = useState<LoginFormState>({
+    email: "",
+    password: "",
+  });
+  const [signupForm, setSignupForm] = useState<SignupFormState>({
+    fullName: "",
+    email: "",
+    password: "",
+  });
   const [postAuthRedirect, setPostAuthRedirect] = useState<string | null>(null);
 
   const loadSlots = useCallback(async (): Promise<void> => {
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/slots", { method: "GET" });
-      const payload = (await response.json()) as ApiListResponse<CalendarSlot[]>;
-      const data = requireApiData(response, payload, "Could not load slots");
+      const data = await fetchSlots();
       setSlots(data);
     } catch (loadError) {
       const message = getErrorMessage(loadError, "Could not load slots");
@@ -104,32 +111,8 @@ export default function HomeClient() {
     setIsLoadingNextAppointment(true);
 
     try {
-      const response = await fetch("/api/appointments", { method: "GET" });
-      const payload = (await response.json()) as ApiListResponse<Appointment[]>;
-      const data = requireApiData(
-        response,
-        payload,
-        "Could not load appointments"
-      );
-
-      const nowMs = Date.now();
-      const upcoming = data
-        .filter(
-          (appointment) =>
-            appointment.status === "scheduled" &&
-            Boolean(appointment.slot_date) &&
-            Boolean(appointment.start_time)
-        )
-        .map((appointment) => {
-          const timestamp = Date.parse(
-            `${appointment.slot_date}T${appointment.start_time}Z`
-          );
-          return { appointment, timestamp };
-        })
-        .filter((item) => Number.isFinite(item.timestamp) && item.timestamp >= nowMs)
-        .sort((a, b) => a.timestamp - b.timestamp);
-
-      setNextAppointment(upcoming[0]?.appointment ?? null);
+      const data = await fetchAppointments();
+      setNextAppointment(pickNextAppointment(data));
     } catch (loadError) {
       const message = getErrorMessage(loadError, "Could not load appointments");
       toastError(message);
@@ -179,8 +162,7 @@ export default function HomeClient() {
   async function onBook(slotId: string, forceAuth?: boolean): Promise<void> {
     if (!authUser && !forceAuth) {
       setPendingBookingSlotId(slotId);
-      setAuthModalView("login");
-      setIsAuthModalOpen(true);
+      setAuthModal({ isOpen: true, view: "login" });
       toastError("You must be logged in to book an appointment");
       return;
     }
@@ -189,14 +171,7 @@ export default function HomeClient() {
     setActiveSlotId(slotId);
 
     try {
-      const response = await fetch("/api/appointments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slotId }),
-      });
-
-      const payload = (await response.json()) as AppointmentResponse;
-      requireApiData(response, payload, "Could not create appointment");
+      await createAppointment(slotId);
 
       toastSuccess("Appointment booked successfully");
       await loadSlots();
@@ -234,7 +209,7 @@ export default function HomeClient() {
   async function onLogin(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
-    if (!loginEmail.trim() || !loginPassword) {
+    if (!loginForm.email.trim() || !loginForm.password) {
       toastError("Email and password are required");
       return;
     }
@@ -242,23 +217,13 @@ export default function HomeClient() {
     setIsLoggingIn(true);
 
     try {
-      const response = await fetch("/api/users/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: loginEmail.trim(),
-          password: loginPassword,
-        }),
-      });
-
-      const payload = (await response.json()) as LoginResponse;
-      const data = requireApiData(response, payload, "Could not sign in");
+      const data = await loginUser(loginForm.email.trim(), loginForm.password);
 
       setAuthUser(data);
       storeAuthUser(data);
-      setLoginPassword("");
+      setLoginForm((prev) => ({ ...prev, password: "" }));
       toastSuccess("Login successful");
-      setIsAuthModalOpen(false);
+      setAuthModal((prev) => ({ ...prev, isOpen: false }));
 
       if (postAuthRedirect) {
         router.push(postAuthRedirect);
@@ -281,7 +246,7 @@ export default function HomeClient() {
   async function onSignup(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
-    if (!signupFullName.trim() || !signupEmail.trim() || !signupPassword) {
+    if (!signupForm.fullName.trim() || !signupForm.email.trim() || !signupForm.password) {
       toastError("full_name, email and password are required");
       return;
     }
@@ -289,28 +254,18 @@ export default function HomeClient() {
     setIsSigningUp(true);
 
     try {
-      const response = await fetch("/api/users/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: signupFullName.trim(),
-          email: signupEmail.trim(),
-          password: signupPassword,
-        }),
-      });
-
-      const payload = (await response.json()) as SignupResponse;
-      const data = requireApiData(response, payload, "Could not sign up");
+      const data = await signupUser(
+        signupForm.fullName.trim(),
+        signupForm.email.trim(),
+        signupForm.password
+      );
 
       setAuthUser(data);
       storeAuthUser(data);
       toastSuccess("Account created and session started");
-      setLoginEmail(data.email);
-      setLoginPassword("");
-      setIsAuthModalOpen(false);
-      setSignupFullName("");
-      setSignupEmail("");
-      setSignupPassword("");
+      setLoginForm((prev) => ({ ...prev, email: data.email, password: "" }));
+      setAuthModal((prev) => ({ ...prev, isOpen: false }));
+      setSignupForm({ fullName: "", email: "", password: "" });
 
       if (postAuthRedirect) {
         router.push(postAuthRedirect);
@@ -332,7 +287,7 @@ export default function HomeClient() {
 
   async function onLogout(): Promise<void> {
     try {
-      await fetch("/api/users/logout", { method: "POST" });
+      await logoutUser();
     } catch {
       // Client cleanup still runs even if API call fails.
     }
@@ -340,7 +295,7 @@ export default function HomeClient() {
     setAuthUser(null);
     setNextAppointment(null);
     setPendingBookingSlotId(null);
-    setLoginPassword("");
+    setLoginForm((prev) => ({ ...prev, password: "" }));
     toastSuccess("Session closed");
     clearStoredAuthUser();
   }
@@ -348,6 +303,25 @@ export default function HomeClient() {
   const handleRedirect = useCallback((redirect: string) => {
     setPostAuthRedirect(redirect);
   }, []);
+
+  const openAuthModal = useCallback((view: AuthModalView) => {
+    setAuthModal({ isOpen: true, view });
+  }, []);
+
+  const handleAuthViewChange = useCallback((view: AuthModalView) => {
+    setAuthModal((prev) => ({ ...prev, view }));
+  }, []);
+
+  const handleLoginChange = useCallback((field: "email" | "password", value: string) => {
+    setLoginForm((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleSignupChange = useCallback(
+    (field: "fullName" | "email" | "password", value: string) => {
+      setSignupForm((prev) => ({ ...prev, [field]: value }));
+    },
+    []
+  );
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
@@ -360,42 +334,16 @@ export default function HomeClient() {
           authUser={authUser}
           onLogout={onLogout}
           onOpenAuth={() => {
-            setAuthModalView("login");
-            setIsAuthModalOpen(true);
+            openAuthModal("login");
           }}
         />
       ) : null}
 
       {isHydrated && authUser && nextAppointment ? (
-        <section className="rounded-xl border p-4">
-          <h2 className="text-lg font-semibold">Your next appointment</h2>
-          {isLoadingNextAppointment ? (
-            <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
-          ) : (
-            <div className="mt-2 text-sm">
-              <p>
-                {formatUtcSlotDateLocal(
-                  nextAppointment.slot_date,
-                  nextAppointment.start_time
-                )}
-              </p>
-              <p className="text-muted-foreground">
-                {formatUtcSlotTimeLocal(
-                  nextAppointment.slot_date,
-                  nextAppointment.start_time
-                )}{" "}
-                -{" "}
-                {formatUtcSlotTimeLocal(
-                  nextAppointment.slot_date,
-                  nextAppointment.end_time
-                )}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Appointment id: {nextAppointment.id}
-              </p>
-            </div>
-          )}
-        </section>
+        <NextAppointmentCard
+          appointment={nextAppointment}
+          isLoading={isLoadingNextAppointment}
+        />
       ) : (
         <></>
       )}
@@ -416,112 +364,27 @@ export default function HomeClient() {
         />
       ) : null}
 
-      {bookingCandidateSlot ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl border bg-background p-4 shadow-lg">
-            <h2 className="text-lg font-semibold">Confirm appointment</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {formatUtcSlotDateLocal(
-                bookingCandidateSlot.slot_date,
-                bookingCandidateSlot.start_time
-              )}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {formatUtcSlotTimeLocal(
-                bookingCandidateSlot.slot_date,
-                bookingCandidateSlot.start_time
-              )}{" "}
-              -{" "}
-              {formatUtcSlotTimeLocal(
-                bookingCandidateSlot.slot_date,
-                bookingCandidateSlot.end_time
-              )}
-            </p>
+      <BookingModal
+        slot={bookingCandidateSlot}
+        isBooking={isBooking}
+        onCancel={() => setBookingCandidateSlot(null)}
+        onConfirm={() => void onConfirmBook()}
+      />
 
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-                onClick={() => setBookingCandidateSlot(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
-                onClick={() => void onConfirmBook()}
-                disabled={isBooking}
-              >
-                {isBooking ? "Booking..." : "Confirm booking"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {isAuthModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-xl border bg-background p-4 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {authModalView === "login" ? "Login" : "Create account"}
-              </h2>
-              <button
-                type="button"
-                className="rounded-md border px-2 py-1 text-sm hover:bg-muted"
-                onClick={() => setIsAuthModalOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mb-4 flex gap-2">
-              <button
-                type="button"
-                className={[
-                  "rounded-md border px-3 py-1 text-sm",
-                  authModalView === "login" ? "bg-muted" : "hover:bg-muted",
-                ].join(" ")}
-                onClick={() => setAuthModalView("login")}
-              >
-                Login
-              </button>
-              <button
-                type="button"
-                className={[
-                  "rounded-md border px-3 py-1 text-sm",
-                  authModalView === "signup" ? "bg-muted" : "hover:bg-muted",
-                ].join(" ")}
-                onClick={() => setAuthModalView("signup")}
-              >
-                Sign up
-              </button>
-            </div>
-
-            {authModalView === "login" ? (
-              <LoginForm
-                email={loginEmail}
-                password={loginPassword}
-                isSubmitting={isLoggingIn}
-                onEmailChange={setLoginEmail}
-                onPasswordChange={setLoginPassword}
-                onSubmit={(event) => onLogin(event)}
-              />
-            ) : (
-              <SignupForm
-                fullName={signupFullName}
-                email={signupEmail}
-                password={signupPassword}
-                isSubmitting={isSigningUp}
-                onFullNameChange={setSignupFullName}
-                onEmailChange={setSignupEmail}
-                onPasswordChange={setSignupPassword}
-                onSubmit={(event) => onSignup(event)}
-              />
-            )}
-          </div>
-        </div>
-      ) : null}
+      <AuthModal
+        isOpen={authModal.isOpen}
+        view={authModal.view}
+        isLoggingIn={isLoggingIn}
+        isSigningUp={isSigningUp}
+        loginValues={loginForm}
+        signupValues={signupForm}
+        onClose={() => setAuthModal((prev) => ({ ...prev, isOpen: false }))}
+        onViewChange={handleAuthViewChange}
+        onLoginChange={handleLoginChange}
+        onSignupChange={handleSignupChange}
+        onLoginSubmit={onLogin}
+        onSignupSubmit={onSignup}
+      />
     </main>
   );
 }
