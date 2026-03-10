@@ -12,5 +12,5 @@ jobs:
     steps:
       - name: Call endpoint
         run: |
-          curl -f -sS -X POST https://nonerroneously-nonelliptic-shaunna.ngrok-free.dev/api/slots/generate \
+          curl -f -sS -X POST https://appointment-management-platform.vercel.app/api/slots/generate \
           -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
