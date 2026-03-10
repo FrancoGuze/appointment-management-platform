@@ -42,6 +42,8 @@ export interface CreateAppointmentInput {
   notes?: string;
 }
 
+const DEFAULT_PROFESSIONAL_ID = process.env.DEFAULT_PROFESSIONAL_ID?.trim() || null;
+
 async function updateSlotState(
   slotId: string,
   state: AppointmentStatus | "available"
@@ -246,7 +248,7 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
     .insert({
       slot_id: input.slotId,
       user_id: input.userId,
-      professional_id: null,
+      professional_id: DEFAULT_PROFESSIONAL_ID,
       status: "scheduled",
       notes: input.notes ?? null,
       updated_at: new Date().toISOString(),

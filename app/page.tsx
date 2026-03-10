@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { toastError, toastSuccess } from "@/src/lib/notify";
 import { getErrorMessage, requireApiData } from "@/src/lib/api-client";
 import { SlotCalendar } from "@/components/slot-calendar";
@@ -56,7 +56,6 @@ interface SignupResponse {
 
 export default function HomePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [slots, setSlots] = useState<CalendarSlot[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isBooking, setIsBooking] = useState<boolean>(false);
@@ -160,18 +159,6 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!isHydrated || authUser) {
-      return;
-    }
-
-    const authQuery = searchParams.get("auth");
-    if (authQuery === "1") {
-      setAuthModalView("login");
-      setIsAuthModalOpen(true);
-    }
-  }, [authUser, isHydrated, searchParams]);
-
-  useEffect(() => {
     if (!isHydrated) {
       return;
     }
@@ -187,8 +174,8 @@ export default function HomePage() {
     void loadNextAppointment();
   }, [authUser, isHydrated, loadNextAppointment]);
 
-  async function onBook(slotId: string): Promise<void> {
-    if (!authUser) {
+  async function onBook(slotId: string, forceAuth?: boolean): Promise<void> {
+    if (!authUser && !forceAuth) {
       setPendingBookingSlotId(slotId);
       setAuthModalView("login");
       setIsAuthModalOpen(true);
@@ -280,7 +267,7 @@ export default function HomePage() {
       if (pendingBookingSlotId) {
         const slotId = pendingBookingSlotId;
         setPendingBookingSlotId(null);
-        await onBook(slotId);
+        await onBook(slotId, true);
       }
     } catch (loginError) {
       const message = getErrorMessage(loginError, "Could not sign in");
@@ -333,7 +320,7 @@ export default function HomePage() {
       if (pendingBookingSlotId) {
         const slotId = pendingBookingSlotId;
         setPendingBookingSlotId(null);
-        await onBook(slotId);
+        await onBook(slotId, true);
       }
     } catch (signupError) {
       const message = getErrorMessage(signupError, "Could not sign up");

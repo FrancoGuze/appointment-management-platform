@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { clearStoredAuthUser } from "@/src/lib/client-auth";
 
 function linkClass(currentPath: string, href: string): string {
   const isActive = currentPath === href;
@@ -15,7 +16,20 @@ function linkClass(currentPath: string, href: string): string {
 
 export function AdminNavbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+
+  async function onLogout(): Promise<void> {
+    try {
+      await fetch("/api/users/logout", { method: "POST" });
+    } catch {
+      // Client cleanup still runs even if API call fails.
+    }
+
+    clearStoredAuthUser();
+    setIsMenuOpen(false);
+    router.replace("/");
+  }
 
   return (
     <header className="rounded-xl border p-4">
@@ -98,9 +112,15 @@ export function AdminNavbar() {
 
         <div className="mt-auto mb-2 flex flex-col gap-2 border-t pt-4">
           <ThemeToggle />
+          <button
+            type="button"
+            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+            onClick={() => void onLogout()}
+          >
+            Logout
+          </button>
         </div>
       </aside>
     </header>
   );
 }
-

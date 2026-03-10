@@ -3,7 +3,7 @@ import type { UserRole } from "@/src/services/users";
 
 export const USER_SESSION_COOKIE = "booking_user_session";
 
-const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const SESSION_TTL_SECONDS = 60 * 60 * 6;
 
 interface SessionPayload {
   userId: string;

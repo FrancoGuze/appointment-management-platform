@@ -53,12 +53,8 @@
   --border: oklch(0.9 0.015 260);
   --input: oklch(0.9 0.015 260);
   --ring: oklch(0.68 0.06 250);
-  --toast-success-bg:red;
-  --toast-success-fg:red;
-  --toast-success-border: oklch(0.86 0.08 155);
-  --toast-error-bg: oklch(0.97 0.03 25);
-  --toast-error-fg: oklch(0.34 0.13 25);
-  --toast-error-border: oklch(0.86 0.08 25);
+  --chart-red: oklch(0.72 0.18 25);
+--chart-green: oklch(0.78 0.17 145);
 }
 
 .dark {
@@ -80,12 +76,8 @@
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 16%);
   --ring: oklch(0.68 0.05 250);
-  --toast-success-bg:red;
-  --toast-success-fg:red;
-  --toast-success-border: oklch(0.58 0.12 155);
-  --toast-error-bg: oklch(0.34 0.13 25 / 0.32);
-  --toast-error-fg: oklch(0.94 0.02 25);
-  --toast-error-border: oklch(0.64 0.14 25);
+  --chart-red: oklch(0.72 0.18 25);
+  --chart-green: oklch(0.78 0.17 145);
 }
 
 @layer base {
