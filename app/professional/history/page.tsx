@@ -12,6 +12,7 @@ interface Appointment {
   id: string;
   slot_id: string;
   user_id: string;
+  user_full_name?: string | null;
   professional_id: string | null;
   slot_date: string | null;
   start_time: string | null;
@@ -81,9 +82,15 @@ export default function ProfessionalHistoryPage() {
 
     const normalizedClientQuery = clientQuery.trim().toLowerCase();
     const byClient = normalizedClientQuery
-      ? byStatus.filter((appointment) =>
-          appointment.user_id.toLowerCase().includes(normalizedClientQuery)
-        )
+      ? byStatus.filter((appointment) => {
+          const userIdMatch = appointment.user_id
+            .toLowerCase()
+            .includes(normalizedClientQuery);
+          const nameMatch = (appointment.user_full_name ?? "")
+            .toLowerCase()
+            .includes(normalizedClientQuery);
+          return userIdMatch || nameMatch;
+        })
       : byStatus;
 
     const sorted = [...byClient];
@@ -120,9 +127,9 @@ export default function ProfessionalHistoryPage() {
             value={sortBy}
             onChange={(event) => setSortBy(event.target.value as HistorySort)}
           >
-            <option value="recently_updated">recently_updated</option>
-            <option value="date_desc">date_desc</option>
-            <option value="date_asc">date_asc</option>
+            <option value="recently_updated">Recently updated</option>
+            <option value="date_desc">Date desc</option>
+            <option value="date_asc">Date asc</option>
           </select>
         </label>
         <label className="text-sm">
@@ -136,10 +143,10 @@ export default function ProfessionalHistoryPage() {
               )
             }
           >
-            <option value="all">all</option>
-            <option value="completed">completed</option>
-            <option value="cancelled">cancelled</option>
-            <option value="no_show">no_show</option>
+            <option value="all">All</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="no_show">No show</option>
           </select>
         </label>
         <label className="text-sm">
@@ -149,7 +156,7 @@ export default function ProfessionalHistoryPage() {
             className="ml-2 rounded-md border bg-background px-2 py-1"
             value={clientQuery}
             onChange={(event) => setClientQuery(event.target.value)}
-            placeholder="user id"
+            placeholder="Client name or id"
           />
         </label>
       </div>
@@ -196,8 +203,25 @@ export default function ProfessionalHistoryPage() {
                       )}
                     </p>
                   </td>
-                  <td className="px-4 py-3">{appointment.user_id}</td>
-                  <td className="px-4 py-3">{appointment.status}</td>
+                  <td className="px-4 py-3">
+                    <p>{appointment.user_full_name ?? "Unnamed client"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {appointment.user_id}
+                    </p>
+                  </td>
+                  <td
+                    className={[
+                      "px-4 py-3",
+                      appointment.status === "cancelled"
+                        ? "text-red-500/70"
+                        : appointment.status === "completed"
+                          ? "text-emerald-500/70"
+                          : "text-muted-foreground/80",
+                    ].join(" ")}
+                  >
+                    {(appointment.status.charAt(0).toUpperCase() +
+                      appointment.status.slice(1)).replace("_", " ")}
+                  </td>
                   <td className="px-4 py-3">
                     {new Intl.DateTimeFormat("en-US", {
                       dateStyle: "medium",

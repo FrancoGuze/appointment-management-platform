@@ -30,7 +30,7 @@ export function ProfessionalCharts({ statsSeries }: ProfessionalChartsProps) {
   return (
     <section className="grid gap-4">
       <article className="rounded-xl border p-4">
-        <h2 className="text-lg font-semibold">Stats?</h2>
+        <h2 className="text-lg font-semibold">Appointments graph</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Completed, cancelled, and total appointments.
         </p>

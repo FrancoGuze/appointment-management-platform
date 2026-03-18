@@ -33,6 +33,13 @@ export default function ProfessionalAppointmentsPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<string>("");
   const [sortBy, setSortBy] = useState<AppointmentSort>("recently_updated");
+  const [pendingStatusChange, setPendingStatusChange] = useState<{
+    appointmentId: string;
+    status: "completed" | "cancelled";
+    prompt: string;
+    confirmLabel: string;
+    cancelLabel: string;
+  } | null>(null);
 
   const loadAppointments = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -118,6 +125,22 @@ export default function ProfessionalAppointmentsPage() {
     }
   }
 
+  function requestStatusChange(
+    appointmentId: string,
+    status: "completed" | "cancelled",
+    prompt: string,
+    confirmLabel: string,
+    cancelLabel: string
+  ): void {
+    setPendingStatusChange({
+      appointmentId,
+      status,
+      prompt,
+      confirmLabel,
+      cancelLabel,
+    });
+  }
+
   return (
     <section className="rounded-xl border p-4">
       <h2 className="text-xl font-semibold">Incoming appointments</h2>
@@ -174,7 +197,15 @@ export default function ProfessionalAppointmentsPage() {
                   type="button"
                   className="rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
                   disabled={isSaving === appointment.id}
-                  onClick={() => void updateStatus(appointment.id, "completed")}
+                  onClick={() =>
+                    requestStatusChange(
+                      appointment.id,
+                      "completed",
+                      "Have you already completed this appointment?",
+                      "Yes, I completed it",
+                      "No yet"
+                    )
+                  }
                 >
                   Mark completed
                 </button>
@@ -182,21 +213,69 @@ export default function ProfessionalAppointmentsPage() {
                   type="button"
                   className="rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
                   disabled={isSaving === appointment.id}
-                  onClick={() => void updateStatus(appointment.id, "no_show")}
-                >
-                  Mark no-show
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
-                  disabled={isSaving === appointment.id}
-                  onClick={() => void updateStatus(appointment.id, "cancelled")}
+                  onClick={() =>
+                    requestStatusChange(
+                      appointment.id,
+                      "cancelled",
+                      "Are you sure you are going to cancel this appointment?",
+                      "Yes, I am sure",
+                      "No, cancel"
+                    )
+                  }
                 >
                   Cancel
                 </button>
               </div>
             </article>
           ))}
+        </div>
+      ) : null}
+
+      {pendingStatusChange ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setPendingStatusChange(null)}
+            aria-hidden="true"
+          />
+          <div
+            className="relative z-10 w-[90%] max-w-xs rounded-lg border bg-background p-4 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-status-title"
+          >
+            <h3 id="confirm-status-title" className="text-lg font-semibold">
+              Confirm status change
+            </h3>
+            <p className="mt-4 text-sm text-muted-foreground">
+              {pendingStatusChange.prompt}
+            </p>
+            <div className="mt-6 flex w-full gap-2">
+              <button
+                type="button"
+                className={[
+                  "flex-[2] rounded-md px-3 py-2 text-sm",
+                  pendingStatusChange.status === "completed"
+                    ? "bg-emerald-950 text-emerald-50 hover:bg-emerald-900"
+                    : "bg-red-950 text-red-50 hover:bg-red-900",
+                ].join(" ")}
+                onClick={() => {
+                  const action = pendingStatusChange;
+                  setPendingStatusChange(null);
+                  void updateStatus(action.appointmentId, action.status);
+                }}
+              >
+                {pendingStatusChange.confirmLabel}
+              </button>
+              <button
+                type="button"
+                className="flex-1 rounded-md border px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => setPendingStatusChange(null)}
+              >
+                {pendingStatusChange.cancelLabel}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </section>
